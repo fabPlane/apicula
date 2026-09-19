@@ -2238,6 +2238,64 @@ def fse_create_slot_plls(dev, device, fse, dat):
         # Himbaechel node
         dev.nodes.setdefault(f'MPLL{pll_idx}{nam}', (wire_type, set()))[1].add((row, col, f'PLLA{nam}'))
 
+def fse_create_grid_plls_138(dev, device, dat):
+    """Create the twelve 138C PLLAs that live in ordinary grid cells.
+
+    Keep these in ``extra_func`` just like the GW5A slot PLLs.  This lets the
+    nextpnr Gowin database generator expose the modern seven-output ``PLLA``
+    primitive while the packer still writes their fuses into the main grid.
+    """
+    if device != 'GW5AST-138C':
+        return
+
+    for dat_row, row_desc in enumerate(dat.grid.rows):
+        for dat_col, func in enumerate(row_desc):
+            if func != 'P':
+                continue
+            row = max(0, dat_row - 1)
+            col = max(0, dat_col - 1)
+            if row == dev.rows:
+                row -= 1
+            if col == dev.cols:
+                col -= 1
+
+            extra = dev.extra_func.setdefault((row, col), {})
+            pll = extra.setdefault('pll', {})
+            offx = -1 if col > dev.center_col and row != dev.rows - 1 else 1
+
+            inputs = pll.setdefault('inputs', {})
+            for idx, nam in _plla_inputs:
+                wire_idx = dat.gw5aStuff['PllIn'][idx]
+                off = dat.gw5aStuff['PllInDlt'][idx]
+                if wire_idx < 0 or off < 0:
+                    continue
+                wire = wnames.wirenames[wire_idx]
+                wire_type = 'TILE_CLK' if nam in {'CLKIN', 'CLKFB'} else 'PLL_I'
+                if off == 0:
+                    inputs[nam] = wire
+                else:
+                    inputs[nam] = f'PLLA{nam}{wire}'
+                    add_node(dev, f'X{col}Y{row}/PLLA{nam}{wire}', wire_type,
+                             row, col, inputs[nam])
+                    add_node(dev, f'X{col}Y{row}/PLLA{nam}{wire}', wire_type,
+                             row, col + off * offx, wire)
+
+            outputs = pll.setdefault('outputs', {})
+            for idx, nam in _plla_outputs:
+                wire_idx = dat.gw5aStuff['PllOut'][idx]
+                off = dat.gw5aStuff['PllOutDlt'][idx]
+                if wire_idx < 0 or off < 0:
+                    continue
+                wire = wnames.wirenames[wire_idx]
+                if off == 0:
+                    outputs[nam] = wire
+                else:
+                    outputs[nam] = f'PLLA{nam}{wire}'
+                    add_node(dev, f'X{col}Y{row}/PLLA{nam}{wire}', 'PLL_O',
+                             row, col, outputs[nam])
+                    add_node(dev, f'X{col}Y{row}/PLLA{nam}{wire}', 'PLL_O',
+                             row, col + off * offx, wire)
+
 # DHCEN (as I imagine) is an additional control input of the HCLK input
 # multiplexer. We have four input multiplexers - HCLK_IN0, HCLK_IN1, HCLK_IN2,
 # HCLK_IN3 (GW1N-9C with its additional four multiplexers stands separately,
@@ -4177,6 +4235,7 @@ def from_fse(device, fse, dat: Datfile):
     fse_create_diff_types(dev, device)
     fse_create_hclk_nodes(dev, device, fse, dat)
     fse_create_slot_plls(dev, device, fse, dat)
+    fse_create_grid_plls_138(dev, device, dat)
     fse_create_adc(dev, device, fse, dat)
     fse_create_mipi(dev, device, dat)
     fse_create_i3c(dev, device, dat)
@@ -6309,4 +6368,3 @@ def pll_pads(dev, device, pad_locs):
         return
     for loc, pll_data in _pll_pads[device].items():
         dev.pad_pll[loc] = pll_data
-

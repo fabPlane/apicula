@@ -93,10 +93,16 @@ def read_one_file(f, tile_type, device):
                      0x51, 0x53, 0x55, 0x57, 0x5c}:
             typn = "logicinfo"
             t = read_table(f, size, 3, 2)
-        elif typ in {0x12, 0x13, 0x35, 0x36, 0x3a}:
+        elif typ in {0x12, 0x13, 0x36, 0x3a} or (typ == 0x35 and device != 'GW5AST-138C'):
             typn = "longfuse"
             t = read_table(f, size, 17, 2)
         elif typ in {0x17, 0x18, 0x25, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f}:
+            typn = "longval"
+            t = read_table(f, size, 28, 2)
+        elif typ == 0x35 and device == 'GW5AST-138C':
+            # Gowin EDA 1.9.11 encodes table 0x35 as 28-word longval
+            # records on the 138C.  Older families use 17-word longfuse
+            # records for the same table number.
             typn = "longval"
             t = read_table(f, size, 28, 2)
         elif typ == 0x43:
@@ -117,6 +123,9 @@ def read_one_file(f, tile_type, device):
         elif typ == 0x9a: # 60K
             typn = "logicinfo"
             t = read_table(f, size, 3, 2)
+        elif typ == -1 and size == -1 and device == 'GW5AST-138C':
+            # Some 138C tile records contain an empty table descriptor.
+            continue
         else:
             raise ValueError("Unknown type {} at {}".format(hex(typ), hex(f.tell())))
         tmap.setdefault(typn, {})[typ] = t
@@ -427,4 +436,3 @@ def reduce_rows(rows, fuses, start=16, tries=1000):
         if rem_fuses != fuses:
             features.add(feat)
     return features
-

@@ -6722,6 +6722,34 @@ class GW5AST_138C(GW5A):
                 self.clock_bridge_xy.add((x, y))
 
     #==============================
+    #========== PLLs
+    #==============================
+    def get_pll_freq_R(self) -> list[tuple[float, float]]:
+        # GW5AST-138C uses the same PLLA analogue block as GW5A-25A.
+        return [(3.24, 72300), (4.79, 48900), (9.22, 25400), (17.09, 13700),
+                (34.08, 6870), (68.05, 3440), (136.1, 1720), (270.95, 864)]
+
+    def get_permitted_pll_freqs(self) -> tuple[float, float, float, float, float]:
+        return (800., 1600., 6.25, 1600., 800.)
+
+    def get_pll_coeffs(self, fvco: float) -> tuple[float, float]:
+        return (240 if fvco >= 1400.0 else 120, 4.725e-11)
+
+    def get_pll_bels(self, bel: BelDesc) -> Iterator[tuple[int, int]]:
+        offx = -1 if bel.x >= self.chipdb.cols // 2 and bel.y != self.chipdb.rows - 1 else 1
+        for off in range(4):
+            yield (bel.x + offx * off, bel.y)
+
+    def common_pll_handler(self, bel: BelDesc) -> list[CellFuseBits]:
+        av = self.get_pll_attrvals(bel)
+        fuses = []
+        for x, y in self.get_pll_bels(bel):
+            bits = self.chipdb.get_pll_fuses(x, y, av)
+            if bits:
+                fuses.append(CellFuseBits(x, y, bits))
+        return fuses
+
+    #==============================
     #========== Pips
     #==============================
     def get_set_spine_enable_table(self, area: str, dest: str) -> str:
