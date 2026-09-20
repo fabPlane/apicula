@@ -3666,10 +3666,16 @@ def fse_create_gsr(dev, device):
         {'gsr': {'wire': wire}})
 
 def fse_create_jtag(dev, device, dat):
-    # XXX
-    if device not in {'GW2A-18C'}:
+    # The GW5AST hard block uses the same fabric-side wire assignment as the
+    # GW2A implementation.  Its routing anchor is on the bottom edge; the CFG
+    # enable bits live in the separate configuration tile and are handled by
+    # the packer.
+    if device == 'GW2A-18C':
+        row, col = 27, 50
+    elif device == 'GW5AST-138C':
+        row, col = 108, 165
+    else:
         return
-    row, col = 27, 50
     dev.extra_func.setdefault((row, col), {}).update(
         {'jtag': {
             'inputs': {
@@ -3854,6 +3860,21 @@ def fse_create_pincfg(dev, device, dat):
         r, c, wire = dat.gw5aStuff['CibFabricNode'][idx]
         if r != 65535:
             make_port(dev, row, col, r, c, wire, 'PINCFG', port, 'PINCFG_IN', ins)
+
+    # The GW5AST-LV138PG484AC1/I0 DAT distributed with current Gowin releases
+    # marks these CibFabricNode entries as invalid.  Preserve the mappings from
+    # the vendor-generated database so regenerated chipdbs remain routable.
+    if device == 'GW5AST-138C' and not ins:
+        ins.update({
+            'SSPI': 'D7',
+            'UNK0_VCC': 'B5',
+            'UNK1_VCC': 'D5',
+            # GW5AST's packer connects this inverted configuration input to
+            # ground.  Model the hard-wired value directly so nextpnr does
+            # not try to route the vendor-only PINCFGUNK2_VCCC0 pseudo-wire.
+            'UNK2_VCC': 'VSS',
+            'UNK3_VCC': 'D6',
+        })
 
     if device in {'GW5A-25A'}:
         # special input (not in the DAT file)

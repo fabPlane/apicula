@@ -1382,8 +1382,14 @@ def main():
         bm[(45, 0)] = bm_pll[(45, 0)]
         bm[(45, 55)] = bm_pll[(45, 55)]
 
+    # Compute this once. Device.bank_tiles scans the complete device grid, so
+    # evaluating the property again for every tile is prohibitively expensive
+    # on large devices such as GW5AST-138C.
+    bank_tiles = tuple(db.bank_tiles.values())
+    bank_tile_set = set(bank_tiles)
+
     # banks first: need to know iostandards
-    for pos in db.bank_tiles.values():
+    for pos in bank_tiles:
         row, col = pos
         try:
             t = bm[(row, col)]
@@ -1396,7 +1402,7 @@ def main():
     for idx, t in bm.items():
         row, col = idx
         # skip banks
-        if (row, col) in db.bank_tiles.values():
+        if (row, col) in bank_tile_set:
             continue
         bels, pips, clock_pips = parse_tile_(db, row, col, t, bm, noiostd = False)
         #print("bels:", idx, bels)

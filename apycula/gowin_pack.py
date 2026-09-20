@@ -5457,6 +5457,26 @@ class GW5A(Device):
     #==============================
     #========== Misc
     #==============================
+    def get_GW_JTAG_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        """Enable both fabric-visible JTAG extension registers.
+
+        GW5A devices keep these bits in their dedicated CFG tile rather than
+        in the tile containing the fabric routing anchor for GW_JTAG.
+        """
+        av = set()
+        self.chipdb.get_cfg_attr_val(AttrVal('JTAG_ER1', 'USED'), av)
+        self.chipdb.get_cfg_attr_val(AttrVal('JTAG_ER2', 'USED'), av)
+
+        fuses = []
+        cfg_types = self.get_cfg_types()
+        for x, y in itertools.product(range(self.chipdb.cols), range(self.chipdb.rows)):
+            if self.chipdb.get_ttyp(x, y) not in cfg_types:
+                continue
+            bits = self.chipdb.get_cfg_fuses(x, y, av)
+            if bits:
+                fuses.append(CellFuseBits(x, y, bits))
+        return fuses
+
     def get_GSR_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
         """ Global Set/Reset """
         gsr_attr_vals = [AttrVal('GSRMODE', 'ACTIVE_LOW')]
