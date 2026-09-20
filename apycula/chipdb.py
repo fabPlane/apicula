@@ -110,6 +110,9 @@ class Device:
     cmd_hdr: List[bytearray] = field(default_factory=list)
     cmd_ftr: List[bytearray] = field(default_factory=list)
     template: Optional[List[List[int]]] = None
+    # Configuration rows present in the bitstream but outside the tile grid.
+    # These must be preserved when a template bitstream is used.
+    template_extra: Optional[List[List[int]]] = None
     # allowable values of bel attributes
     # {table_name: {(attr_id, attr_value): code}}
     logicinfo: Dict[str, Dict[Tuple[int, int], int]] = field(default_factory=dict)

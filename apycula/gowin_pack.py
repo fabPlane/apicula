@@ -462,6 +462,7 @@ class ChipDB:
         with importlib.resources.path('apycula', f'{self.device_name}.msgpack.xz') as path:
             self.db = load_chipdb(path)
         self.simplio_rows = sorted(list(self.db.simplio_rows))
+        self._fuse_domains = {}
 
     def io_loc_from_str_to_xyidx(self, io_loc: str) -> tuple[int, int, str]:
         side = io_loc[2]
@@ -494,7 +495,116 @@ class ChipDB:
 
     def create_main_tilemap(self) -> dict:
         """ Return chip tilemap """
-        return chipdb.tile_bitmap(self.db, bitmatrix.zeros(self.db.height, self.db.width), empty = True)
+        bitmap = self.db.template
+        if bitmap is None:
+            bitmap = bitmatrix.zeros(self.db.height, self.db.width)
+        return chipdb.tile_bitmap(self.db, bitmap, empty = True)
+
+    @staticmethod
+    def _table_domain(table) -> set[Coord]:
+        return set().union(*table.values()) if table else set()
+
+    def _logic_table_name(self, table_name: str) -> str | None:
+        if table_name.startswith('CLS') or table_name == 'LUT':
+            return 'SLICE'
+        if table_name.startswith('IOB') or table_name == 'BANK':
+            return 'IOB'
+        if table_name.startswith('IOLOGIC'):
+            return 'IOLOGIC'
+        if table_name.startswith('DCS'):
+            return 'DCS'
+        if table_name.startswith('5A_PCLK_ENABLE'):
+            return '5A_PCLK_ENABLE'
+        for name in ('CFG', 'GSR', 'HCLK', 'OSC', 'PLL', 'DLLDLY',
+                     'BSRAM', 'ADC', 'USB', '5A_DSP', 'DSP'):
+            if table_name.startswith(name):
+                return name
+        if table_name in self.db.logicinfo:
+            return table_name
+        return None
+
+    def _selected_attribute_domain(self, table_name: str, table,
+                                   bits: set[Coord]) -> set[Coord]:
+        """Return alternatives for only the attributes encoded in ``bits``."""
+        logic_name = self._logic_table_name(table_name)
+        if logic_name is None or logic_name not in self.db.logicinfo:
+            return set()
+
+        reverse = self.db.rev_logicinfo(logic_name)
+        selected_attrs = set()
+        for key, fuses in table.items():
+            if not fuses or not set(fuses).issubset(bits):
+                continue
+            for code in key:
+                if code == 0:
+                    break
+                attrval = reverse.get(abs(code))
+                if attrval is not None:
+                    selected_attrs.add(attrval[0])
+
+        if not selected_attrs:
+            return set()
+
+        domain = set()
+        for key, fuses in table.items():
+            for code in key:
+                if code == 0:
+                    break
+                attrval = reverse.get(abs(code))
+                if attrval is not None and attrval[0] in selected_attrs:
+                    domain.update(fuses)
+                    break
+        return domain
+
+    def get_fuse_domains(self, x: int, y: int) -> list[set[Coord]]:
+        """Return independently encoded fuse domains for one tile.
+
+        GW5AST-138C starts from a non-zero blank-state bitmap.  Updating one
+        mux or attribute table must replace that table's encoding while
+        preserving unrelated baseline bits in the same tile.
+        """
+        cache_key = (x, y)
+        if cache_key in self._fuse_domains:
+            return self._fuse_domains[cache_key]
+
+        ttyp = self.get_ttyp(x, y)
+        tile = self.get_tiledata(x, y)
+        domains = []
+
+        for dest, choices in tile.pips.items():
+            domain = self._table_domain(choices)
+            for _, bits in tile.alonenode.get(dest, []):
+                domain.update(bits)
+            if domain:
+                domains.append(domain)
+
+        for choices in tile.clock_pips.values():
+            domain = self._table_domain(choices)
+            if domain:
+                domains.append(domain)
+
+        for choices in self.db.hclk_pips.get((y, x), {}).values():
+            domain = self._table_domain(choices)
+            if domain:
+                domains.append(domain)
+
+        self._fuse_domains[cache_key] = domains
+        return domains
+
+    def get_fuse_domain(self, x: int, y: int, bits: set[Coord]) -> set[Coord]:
+        domain = set()
+        for candidate in self.get_fuse_domains(x, y):
+            if candidate & bits:
+                domain.update(candidate)
+
+        ttyp = self.get_ttyp(x, y)
+        for tables in (self.db.longfuses.get(ttyp, {}),
+                       self.db.shortval.get(ttyp, {}),
+                       self.db.longval.get(ttyp, {})):
+            for table_name, table in tables.items():
+                domain.update(self._selected_attribute_domain(
+                    table_name, table, bits))
+        return domain
 
     def create_main_tilemap_holes(self, calc_size_func) -> dict:
         """ Return chip tilemap """
@@ -1627,6 +1737,12 @@ class Device:
 
     def get_dualpin_fuses(self) -> list[CellFuseBits]:
         """ Dual purpose pins """
+        # A template bitstream is authoritative for dual-purpose configuration
+        # pins.  Re-applying the incomplete reverse-engineered CFG table can
+        # corrupt otherwise valid GW5AST-138C READY/DONE/SSPI settings.
+        if self.chipdb.db.template is not None:
+            return []
+
         pins_attr_vals = self.get_pins_attr_vals()
         av = set()
         for attrval in pins_attr_vals:
@@ -6893,9 +7009,17 @@ class Bitstream:
 
     def set_fuses(self, fuses: list[CellFuseBits]):
         """ Set bits in all cells """
+        tile_bits = {}
         for cell in fuses:
-            tile = self.main_tilemap[cell.y, cell.x]
-            for row, col in cell.bits:
+            tile_bits.setdefault((cell.x, cell.y), set()).update(cell.bits)
+
+        for (x, y), bits in tile_bits.items():
+            tile = self.main_tilemap[y, x]
+            if self.device.chipdb.db.template is not None:
+                domain = self.device.chipdb.get_fuse_domain(x, y, bits)
+                for row, col in domain:
+                    tile[row][col] = 0
+            for row, col in bits:
                 tile[row][col] = 1
 
     def set_multiboot_address(self):
@@ -7001,9 +7125,15 @@ class Bitstream_GW5A(Bitstream):
     def write(self):
         """ Write bitsream to file """
         main_map = self.device.fuse_bitmap(self.main_tilemap)
-        main_map = bitmatrix.transpose(main_map)
+        # The configuration checksum covers the tile grid only.  Some GW5A
+        # devices also carry fixed rows outside that grid; those rows are
+        # emitted below, but Gowin does not include them in USERCODE.
+        self.fill_header_footer(bitmatrix.transpose(main_map))
 
-        self.fill_header_footer(main_map)
+        template_extra = self.device.chipdb.db.template_extra
+        if template_extra:
+            main_map = bitmatrix.vstack(main_map, template_extra)
+        main_map = bitmatrix.transpose(main_map)
 
         if self.device.has_bsram_init_data():
             self.write_with_bsram(main_map)
@@ -7080,7 +7210,8 @@ class Pack:
 
     def set_const_fuses(self):
         """ Set fuses that must always be in place """
-        self.fuses += self.device.get_all_cons_fuses()
+        if self.device.chipdb.db.template is None:
+            self.fuses += self.device.get_all_cons_fuses()
 
     def get_fuses(self) -> list[CellFuseBits]:
         """ Return generated fuses """

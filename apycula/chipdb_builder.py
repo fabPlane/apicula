@@ -11,6 +11,7 @@ from apycula import wirenames as wnames
 from apycula import dat_parser
 from apycula import tm_parser
 from apycula import chipdb
+from apycula import bslib
 from apycula.chipdb import save_chipdb
 from apycula import tracing
 from apycula import gowin_unpack
@@ -384,6 +385,8 @@ def main():
                         help='Skip SDRAM pin discovery')
     parser.add_argument('-o', '--output',
                         help='Output path (default: apycula/{device}.msgpack.xz)')
+    parser.add_argument('--template-bitstream',
+                        help='Empty vendor .fs used as the base configuration bitmap')
     args = parser.parse_args()
 
     device = args.device
@@ -473,6 +476,19 @@ def main():
 
     # the reverse logicinfo does not make sense to store in the database
     db.rev_li = {}
+
+    if args.template_bitstream:
+        template, _, _, _ = bslib.read_bitstream(args.template_bitstream)
+        if len(template) < db.height or len(template[0]) < db.width:
+            raise ValueError(
+                f"Template bitmap is {len(template)}x{len(template[0])}, "
+                f"but the device requires at least {db.height}x{db.width}")
+        if hasattr(template, 'tolist'):
+            template = template[:, :db.width].tolist()
+        else:
+            template = [row[:db.width] for row in template]
+        db.template = template[:db.height]
+        db.template_extra = template[db.height:]
 
     # Save output
     output = args.output or f"apycula/{device}.msgpack.xz"
