@@ -253,19 +253,26 @@ _chip_id = {
 # generate bitsream header
 def gen_hdr(device, params):
     hdr = [bytearray(b'\xff'*20)]
+    if device == 'GW5AST-138C':
+        # GW5AST-138C requires the additional sync marker emitted by Gowin
+        # EDA before the normal 0xffff/A5C3 command stream.
+        hdr.append(bytearray(b'\xff\xff\xff\xff\xde\xde\xde\xde\xff\xff\xff\xff'))
     hdr.append(bytearray(b'\xff'*2))
     # magic
     hdr.append(bytearray(b'\xa5\xc3'))
     # chip id
     hdr.append(bytearray(_chip_id[device]))
     # flags?
-    hdr.append(bytearray(b'\x10\x00\x00\x00\x00\xae\x00\x00'))
-    if params['device'] in {'GW5A-25A'}:
+    flags = b'\x10\x00\x00\x00\x00\xac\x00\x00' if device == 'GW5AST-138C' \
+        else b'\x10\x00\x00\x00\x00\xae\x00\x00'
+    hdr.append(bytearray(flags))
+    if device in {'GW5A-25A', 'GW5AST-138C'}:
         hdr.append(bytearray(b'\x62\x00\x00\x00\x00\x00\x00\x40'))
     # compression keys
     hdr.append(bytearray(b'\x51\x00\xff\xff\xff\xff\xff\xff'))
     # something about the Security Bit
-    hdr.append(bytearray(b'\x0b\x00\x00\x00'))
+    if device != 'GW5AST-138C':
+        hdr.append(bytearray(b'\x0b\x00\x00\x00'))
     # SPI address = 0
     hdr.append(bytearray(b'\xd2\x00\xff\xff\x00\x00\x00\x00'))
     # unknown

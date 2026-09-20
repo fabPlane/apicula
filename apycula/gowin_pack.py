@@ -6721,6 +6721,27 @@ class GW5AST_138C(GW5A):
             if self.chipdb.get_ttyp(x, y) in self.clock_bridge_ttypes:
                 self.clock_bridge_xy.add((x, y))
 
+    def get_hdr(self):
+        """Return the GW5AST-138C command header used by Gowin EDA.
+
+        Older generated databases contain the generic GW5A header.  Keep the
+        protocol-critical header here as well so existing chip databases gain
+        the fix without being regenerated.
+        """
+        return [
+            bytearray(b'\xff' * 20),
+            bytearray(b'\xff\xff\xff\xff\xde\xde\xde\xde\xff\xff\xff\xff'),
+            bytearray(b'\xff' * 2),
+            bytearray(b'\xa5\xc3'),
+            bytearray(b'\x06\x00\x00\x00\x00\x01\x08\x1b'),
+            bytearray(b'\x10\x00\x00\x00\x00\xac\x00\x00'),
+            bytearray(b'\x62\x00\x00\x00\x00\x00\x00\x40'),
+            bytearray(b'\x51\x00\xff\xff\xff\xff\xff\xff'),
+            bytearray(b'\xd2\x00\xff\xff\x00\x00\x00\x00'),
+            bytearray(b'\x12\x00\x00\x00'),
+            bytearray(b'\x3b\x80\x00\x00'),
+        ]
+
     #==============================
     #========== PLLs
     #==============================
@@ -6828,6 +6849,8 @@ class GW5AST_138C(GW5A):
             attrvals.append(AttrVal('JTAG_AS_GPIO', 'YES'))
         if self.cli_args.args.mspi_as_gpio:
             attrvals.append(AttrVal('MSPI_AS_GPIO', 'YES'))
+        if self.cli_args.args.sspi_as_gpio:
+            attrvals.append(AttrVal('SSPI_AS_GPIO', 'YES'))
         if self.cli_args.args.ready_as_gpio:
             attrvals.append(AttrVal('READY_AS_GPIO', 'YES'))
         if self.cli_args.args.done_as_gpio:

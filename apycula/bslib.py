@@ -54,6 +54,10 @@ def read_bitstream(fname):
                 continue
             ba = bytearr(line)
             if not frames:
+                if preamble and ba == b'\xff\xff\xff\xff\xde\xde\xde\xde\xff\xff\xff\xff':
+                    # GW5AST-138C inserts this sync marker before the normal
+                    # 0xffff/A5C3 preamble.  It is not part of the frame CRC.
+                    preamble += 1
                 if is_hdr:
                     #print("header:", ba)
                     hdr.append(ba)
@@ -376,7 +380,11 @@ def write_bitstream(fname, bs, hdr, ftr, compress, extra_slots, gw5a_bsram_init_
             print("Warning. No unused bytes, will be uncompressed.")
 
     crcdat = bytearray()
-    preamble = 3
+    # CRC accumulation starts after the A5C3 magic word.  Most devices have a
+    # three-line preamble; GW5AST-138C adds a 96-bit sync marker, making it
+    # four.  Derive this from the header so future preamble variants work too.
+    preamble = next((idx + 1 for idx, ba in enumerate(hdr)
+                     if ba == b'\xa5\xc3'), 3)
     calc = make_crc16_arc()
     with open(fname, 'w') as f:
         for ba in hdr:
