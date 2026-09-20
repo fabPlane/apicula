@@ -6858,6 +6858,26 @@ class GW5AST_138C(GW5A):
             bytearray(b'\x3b\x80\x00\x00'),
         ]
 
+    def fuse_bitmap(self, tilemap) -> dict:
+        """Apply the combined READY/DONE GPIO encoding.
+
+        On GW5AST-138C the two options share a pair of bits in the READY/DONE
+        I/O tile.  The FSE routing table aliases those bits to an unrelated
+        X04 mux, so they must be overlaid after normal fuse-domain updates.
+        Controlled vendor builds show that neither option sets either bit on
+        its own; enabling both sets the pair.
+        """
+        tile = tilemap[108, 170]
+        if self.cli_args.args.ready_as_gpio:
+            # READY's GPIO path selects B0 <- X04 in the dual-purpose tile.
+            tile[4][28] = 1
+            tile[5][23] = 1
+        if (self.cli_args.args.ready_as_gpio
+                and self.cli_args.args.done_as_gpio):
+            tile[2][68] = 1
+            tile[2][71] = 1
+        return super().fuse_bitmap(tilemap)
+
     #==============================
     #========== PLLs
     #==============================
@@ -7130,7 +7150,8 @@ class Bitstream_GW5A(Bitstream):
         # emitted below, but Gowin does not include them in USERCODE.
         self.fill_header_footer(bitmatrix.transpose(main_map))
 
-        template_extra = self.device.chipdb.db.template_extra
+        template_extra = getattr(
+            self.device.chipdb.db, 'template_extra', None)
         if template_extra:
             main_map = bitmatrix.vstack(main_map, template_extra)
         main_map = bitmatrix.transpose(main_map)
