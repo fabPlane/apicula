@@ -3666,38 +3666,50 @@ def fse_create_gsr(dev, device):
         {'gsr': {'wire': wire}})
 
 def fse_create_jtag(dev, device, dat):
-    # The GW5AST hard block uses the same fabric-side wire assignment as the
-    # GW2A implementation.  Its routing anchor is on the bottom edge; the CFG
-    # enable bits live in the separate configuration tile and are handled by
-    # the packer.
+    # The DAT JtagIns/JtagOuts tables contain fabric wire indices in their
+    # vendor-defined table order.  Use those instead of copying the mapping
+    # from another family: for example, GW2A uses C1/C2 for the ER return data
+    # while GW5AST uses B2/B3.
     if device == 'GW2A-18C':
         row, col = 27, 50
     elif device == 'GW5AST-138C':
-        row, col = 108, 165
+        row, col = 108, 166
     else:
         return
+
+    input_ports = [
+        'tck_pad_i', 'tms_pad_i', 'tdi_pad_i', 'tdo_er1_i', 'tdo_er2_i'
+    ]
+    output_ports = [
+        'tdo_pad_o', 'tck_o', 'tdi_o', 'test_logic_reset_o',
+        'run_test_idle_er1_o', 'run_test_idle_er2_o',
+        'shift_dr_capture_dr_o', 'pause_dr_o', 'update_dr_o', 'enable_er1_o',
+        'enable_er2_o'
+    ]
+
+    def jtag_ports(names, indices):
+        return {
+            name: (wnames.wirenames[index] if index >= 0
+                   else f'DUMMY_JTAG_{name.upper()}')
+            for name, index in zip(names, indices)
+        }
+
+    inputs = jtag_ports(input_ports, dat.compat_dict['JtagIns'])
+    outputs = jtag_ports(output_ports, dat.compat_dict['JtagOuts'])
+
+    # On GW5AST the hard block is located in X166Y108, but getCruNodeByIndex()
+    # resolves its fabric outputs to the adjacent X165Y108 routing tile.  Model
+    # that as explicit cross-tile nodes; treating Q6/F6/etc. as local wires on
+    # the hard-block tile produces a valid-looking route that is not connected
+    # to the silicon JTAG block.
+    if device == 'GW5AST-138C':
+        for port, index in zip(output_ports, dat.compat_dict['JtagOuts']):
+            if index >= 0:
+                make_port(dev, row, col, row + 1, col, index, 'GW_JTAG', port,
+                          'JTAG_OUT', outputs)
+
     dev.extra_func.setdefault((row, col), {}).update(
-        {'jtag': {
-            'inputs': {
-                'tck_pad_i': 'DUMMY_JTAG_TCK_PAD',
-                'tms_pad_i': 'DUMMY_JTAG_TMS_PAD',
-                'tdi_pad_i': 'DUMMY_JTAG_TDI_PAD',
-                'tdo_er1_i': 'C1',
-                'tdo_er2_i': 'C2',
-                },
-            'outputs': {
-                'tdo_pad_o': 'DUMMY_JTAG_TDO_PAD',
-                'pause_dr_o': 'DUMMY_JTAG_PAUSE',
-                'tck_o': 'Q6',
-                'tdi_o': 'Q5',
-                'test_logic_reset_o': 'Q3',
-                'run_test_idle_er1_o': 'Q4',
-                'run_test_idle_er2_o': 'F7',
-                'shift_dr_capture_dr_o': 'F6',
-                'update_dr_o': 'Q2',
-                'enable_er1_o': 'Q0',
-                'enable_er2_o': 'Q1',
-                }}})
+        {'jtag': {'inputs': inputs, 'outputs': outputs}})
 
 def fse_create_bandgap(dev, device):
     # The cell and wire are found by a test compilation where the BGEN input is
