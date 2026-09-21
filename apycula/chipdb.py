@@ -1137,6 +1137,19 @@ def gw5_hclk_idx(dev, device, row, col):
         if col == 0:
             return 2
         return 3
+    if device == 'GW5AST-138C':
+        # Two HCLK banks serve each vertical edge, while the two additional
+        # banks live along the bottom edge.  Table-48 also occurs in small
+        # bridge fragments; assigning by edge/half associates those fragments
+        # with the same control block as the full switch-matrix tile.
+        if col == 0:
+            return 0 if row < dev.rows // 2 else 2
+        if col == dev.cols - 1:
+            return 1 if row < dev.rows // 2 else 3
+        if row == dev.rows - 1:
+            return 4 if col < dev.cols // 2 else 5
+        if row == 0:
+            return 0 if col < dev.cols // 2 else 1
     return -1
 
 # Table 48 describes the HCLK wire connections, but the problem is that it also
@@ -1148,7 +1161,7 @@ def gw5_hclk_wire_offset(device):
     return {'GW5A-25A': 187, 'GW5AST-138C': 187}[device]
 
 def gw5_ihclk_wire_num(device):
-    return {'GW5A-25A': 65}[device]
+    return {'GW5A-25A': 65, 'GW5AST-138C': 65}[device]
 
 def gw5_get_num_of_hclks(device):
     if device == 'GW5A-25A':
@@ -1171,6 +1184,8 @@ def gw5_create_hclk_iol_pip(dev, device, row, col):
 def gw5_logic_to_hclk_wires(device):
     if device == 'GW5A-25A':
         return {0: (0, 64), 1: (36, 27), 2: (1, 0), 3: (34, 91)}
+    if device == 'GW5AST-138C':
+        return _gw5a_hclk_locs[device]
     return {}
 
 def make_hclk_pip(dev, hclk_idx, row, col, src, dest, fuses = set()):
@@ -1204,7 +1219,8 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
                         fuses = {fuse.fuse_lookup(fse, ttyp, f, device) for f in unpad(fuses)}
                         # HCLK wires
                         if srcid < hclk_off:
-                            if srcid in range(104, 108): # CLKDIV outputs
+                            if (device == 'GW5A-25A'
+                                    and srcid in range(104, 108)): # CLKDIV outputs
                                 src = wnames.hclknames[srcid + hclk_idx * hclk_off]
                                 dest = wnames.clknames[destid]
                                 dev.hclk_pips.setdefault((row, col), {}).setdefault(dest, {}).update({src: fuses})
@@ -1220,7 +1236,9 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
                                 src = wnames.hclknames[srcid + hclk_idx * hclk_off]
                                 dest = wnames.hclknames[destid + hclk_idx * hclk_off]
                                 mk_hclk_pip(hclk_idx, row, col, src, dest, fuses)
-                            elif srcid in range(hclk_off, hclk_off + 4 * ihclk_wire_num) and destid in range(hclk_off, hclk_off + 4 * ihclk_wire_num):
+                            elif (device == 'GW5A-25A'
+                                  and srcid in range(hclk_off, hclk_off + 4 * ihclk_wire_num)
+                                  and destid in range(hclk_off, hclk_off + 4 * ihclk_wire_num)):
                                 src = wnames.hclknames[srcid + 5 * hclk_off]
                                 dest = wnames.hclknames[destid + 5 * hclk_off]
                                 mk_hclk_pip('_IHCLK', row, col, src, dest, fuses)
@@ -1247,10 +1265,9 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
     # default PIPs - The tables for the GW5A series do not include
     # descriptions of the default PIPs. So we add them manually by placing
     # them in cell (0, 0) — this works because the default PIP has no fuse.
-    # XXX This section will need to be modified for the 138C—it has more HCLKs
     row = 0
     col = 0
-    for hclk_idx in range(4):
+    for hclk_idx in range(gw5_get_num_of_hclks(device)):
         for j in range(4):
             # make pip HCLKxy <- HCLK_MUX_ALPHAxy
             src = f'HCLK_MUX_ALPHA{hclk_idx}{j}'
@@ -1290,7 +1307,7 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
 
 
     # Epsilon defaults
-    for i in range(4):
+    for i in range(gw5_get_num_of_hclks(device)):
         mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}0', f'HCLK_BUF_AI{i}0')
         mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}2', f'HCLK_BUF_AI{i}1')
         mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}4', f'HCLK_BUF_AI{i}2')
@@ -1462,7 +1479,20 @@ def gw5_make_hclk_to_clk_gates(dev, device, fse, dat: Datfile):
 # The GW5A series has a different CLKDIV/CLKDIV2 configuration—each of the four
 # wires in a single HCLK block has its own dedicated CLKDIV/CLKDIV2. The inputs
 # for CLKDIV2 are HCLK_BUF_BO.
-_gw5a_hclk_locs = { 'GW5A-25A': { 0: (0, 64), 1: (36, 27), 2: (1, 0), 3: (34, 91)} }
+_gw5a_hclk_locs = {
+    'GW5A-25A': {
+        0: (0, 64), 1: (36, 27), 2: (1, 0), 3: (34, 91),
+    },
+    # GW5AST-138C has six HCLK control blocks.  These are the six tiles with
+    # full table-48 HCLK switch matrices (the other table-48 tiles are only
+    # edge/bridge fragments).  Four CLKDIVs per block matches the 24 CLKDIVs
+    # reported by the vendor tools.
+    'GW5AST-138C': {
+        0: (27, 0), 1: (27, 181),
+        2: (81, 0), 3: (81, 181),
+        4: (108, 64), 5: (108, 117),
+    },
+}
 def gw5_add_hclk_bels(dat, dev, device):
     for hclk_idx, hclk_loc in _gw5a_hclk_locs[device].items():
         row, col = hclk_loc
@@ -1891,7 +1921,7 @@ def _iter_edge_coords(dev):
 
 def add_hclk_bels(dat, dev, device):
     #Stub for parts that don't have HCLK bel support yet
-    if device in {'GW5A-25A'}:
+    if device in {'GW5A-25A', 'GW5AST-138C'}:
         gw5_add_hclk_bels(dat, dev, device)
         return
     if device not in ("GW2A-18", "GW2A-18C", "GW1N-9", "GW1N-9C", "GW1N-1", "GW1NZ-1", "GW1NS-4", "GW1N-4"):
@@ -2005,6 +2035,9 @@ def fse_create_hclk_nodes(dev, device, fse, dat: Datfile):
     if device in {'GW5A-25A'}:
         gw5_make_pin_to_hclk(dev)
         gw5_make_hclk_to_clk_gates(dev, device, fse, dat)
+        gw5_make_hclk_pips(dev, device, fse, dat)
+        return
+    if device == 'GW5AST-138C':
         gw5_make_hclk_pips(dev, device, fse, dat)
         return
 
@@ -2298,6 +2331,14 @@ def fse_create_grid_plls_138(dev, device, dat):
                              row, col, outputs[nam])
                     add_node(dev, f'X{col}Y{row}/PLLA{nam}{wire}', 'PLL_O',
                              row, col + off * offx, wire)
+
+            # CLKFBOUT is not present in the GW5AST grid-PLL port tables, but
+            # it is still a real PLLA primitive port (and is used for internal
+            # feedback mode).  Give it a private wire just as the GW5A slot
+            # PLL path does; external routing is neither required nor implied.
+            outputs['CLKFBOUT'] = 'PLLACLKFBOUT'
+            add_node(dev, f'X{col}Y{row}/PLLACLKFBOUT', 'PLL_O',
+                     row, col, outputs['CLKFBOUT'])
 
 # DHCEN (as I imagine) is an additional control input of the HCLK input
 # multiplexer. We have four input multiplexers - HCLK_IN0, HCLK_IN1, HCLK_IN2,

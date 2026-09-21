@@ -1008,16 +1008,38 @@ clknumbers_5ast138c = {v: k for k, v in clknames_5ast138c.items()}
 # hclk
 hclknames_5ast138c = clknames_5ast138c.copy()
 
-hclknames_5ast138c[0] = 'VSS'
-hclknames_5ast138c[1] = 'VCC'
-hclknames_5ast138c[187] = 'VSS'
-hclknames_5ast138c[188] = 'VCC'
-hclknames_5ast138c[374] = 'VSS'
-hclknames_5ast138c[375] = 'VCC'
-hclknames_5ast138c[561] = 'VSS'
-hclknames_5ast138c[562] = 'VCC'
+hclknames_5ast138c.update({n: f"HCLK_UNK{n}" for n in range(6 * 187)})
 
-hclknames_5ast138c.update({n: f"HCLK_UNK{n}" for n in range(2, 701)})
+# Six GW5A-style HCLK blocks, four divider lanes per block.  The wire layout
+# repeats every 187 entries on GW5AST just as it does on GW5A-25A.
+for hclk in range(6):
+    base = hclk * 187
+    hclknames_5ast138c[base] = 'VSS'
+    hclknames_5ast138c[base + 1] = 'VCC'
+    for i in range(4):
+        # Unlike GW5A-25A (143/104), GW5AST's table-48 matrix exposes the
+        # divider inputs at 110..113 and outputs at 114..117.
+        hclknames_5ast138c[base + 110 + i] = f'CLKDIV_I{hclk}{i}'
+        hclknames_5ast138c[base + 114 + i] = f'CLKDIV_O{hclk}{i}'
+        hclknames_5ast138c[base + 30 + i] = f'L2HCLK{hclk}{i}'
+        hclknames_5ast138c[base + 118 + i] = f'HCLK{hclk}{i}'
+        hclknames_5ast138c[base + 92 + i] = f'HCLK_MUX_ALPHA{hclk}{i}'
+        hclknames_5ast138c[base + 34 + i] = f'HCLK_MUX_BETA{hclk}{i}'
+        hclknames_5ast138c[base + 24 + i] = f'HCLK_MUX_GAMMA{hclk}{i}'
+        hclknames_5ast138c[base + 139 + i] = f'HCLK_MUX_DELTA{hclk}{i}'
+        hclknames_5ast138c[base + 131 + i] = f'HCLK_MUX_EPSILON{hclk}{i}'
+        hclknames_5ast138c[base + 135 + i] = f'HCLK_MUX_EPSILON{hclk}{i + 4}'
+        hclknames_5ast138c[base + 169 + i] = f'HCLK_FROM_IHCLK{hclk}{i}'
+        hclknames_5ast138c[base + 177 + i] = f'HCLK_TO_IHCLK{hclk}{i}'
+        hclknames_5ast138c[base + 76 + 2 * i] = f'HCLK_BUF_AO{hclk}{i}'
+        hclknames_5ast138c[base + 52 + i] = f'HCLK_BUF_AI{hclk}{i}'
+        hclknames_5ast138c[base + 77 + 2 * i] = f'HCLK_BUF_BO{hclk}{i}'
+        hclknames_5ast138c[base + 56 + i] = f'HCLK_BUF_BI{hclk}{i}'
+        hclknames_5ast138c[base + 165 + i] = f'HCLK_GCLK_MUX{hclk}{i}'
+    for i in range(2):
+        hclknames_5ast138c[base + 28 + i] = f'HCLK_HUB{hclk}{i}'
+    for i in range(8):
+        hclknames_5ast138c[base + 123 + i] = f'HCLK_GCLK{hclk}{i}'
 
 # HCLK->CLK
 hclknames_5ast138c.update({n: f"HCLK_TO_GCLK0{i}" for i, n in enumerate([25, 27, 28, 29])})
@@ -1071,6 +1093,4 @@ def select_wires(device):
         clknumbers  = clknumbers_pre5a
         hclknames   = hclknames_pre5a
         hclknumbers = hclknumbers_pre5a
-
-
 

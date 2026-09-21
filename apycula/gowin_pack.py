@@ -6912,6 +6912,23 @@ class GW5AST_138C(GW5A):
     def get_pll_coeffs(self, fvco: float) -> tuple[float, float]:
         return (240 if fvco >= 1400.0 else 120, 4.725e-11)
 
+    def get_CLKDIV_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        """Encode the per-lane GW5A-style divider in an HCLK block."""
+        hclk_idx = bel.idx_str[-1]
+        av = set()
+        self.chipdb.get_hclk_attr_val(
+            AttrVal(f"HCLKDIV{hclk_idx}_DIV", self.get_clkdiv_divmode(bel)), av)
+
+        fuses = []
+        for x, y in self.get_clkdiv_bels(bel):
+            bits = self.chipdb.get_hclk_fuses(x, y, av)
+            if bits:
+                fuses.append(CellFuseBits(x, y, bits))
+        return fuses
+
+    def get_CLKDIV2_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        return []
+
     def get_pll_bels(self, bel: BelDesc) -> Iterator[tuple[int, int]]:
         offx = -1 if bel.x >= self.chipdb.cols // 2 and bel.y != self.chipdb.rows - 1 else 1
         for off in range(4):
