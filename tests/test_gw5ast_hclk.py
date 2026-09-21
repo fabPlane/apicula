@@ -35,6 +35,19 @@ class GW5ASTHclkTests(unittest.TestCase):
             self.assertEqual(dev.extra_func[loc]['clkdiv']['hclk_idx'], hclk)
             self.assertEqual(len(dev.extra_func[loc]['clkdiv']['bels']), 4)
 
+    def test_all_four_edges_expose_iologic_hclk_paths(self):
+        dev = SimpleNamespace(rows=109, cols=182)
+        for row, col in ((0, 40), (108, 40), (40, 0), (40, 181)):
+            self.assertTrue(chipdb.gw5_create_hclk_iol_pip(
+                dev, 'GW5AST-138C', row, col))
+        self.assertFalse(chipdb.gw5_create_hclk_iol_pip(
+            dev, 'GW5AST-138C', 40, 40))
+
+    def test_device_enables_gw5_hclk_architecture(self):
+        dev = SimpleNamespace(chip_flags=[], dcs_prefix=None)
+        chipdb.set_chip_flags(dev, 'GW5AST-138C')
+        self.assertIn('HAS_5A_HCLK', dev.chip_flags)
+
 
 if __name__ == '__main__':
     unittest.main()

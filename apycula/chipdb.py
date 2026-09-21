@@ -1179,6 +1179,11 @@ def gw5_create_hclk_iol_pip(dev, device, row, col):
             return row not in {10, 18}
         if col == dev.cols - 1:
             return row not in {2, 10, 27}
+    if device == 'GW5AST-138C':
+        # The IOLOGIC sites are distributed along all four edges.  Individual
+        # tiles without an IOLOGIC simply leave these virtual FCLK endpoints
+        # unused in nextpnr.
+        return row in {0, dev.rows - 1} or col in {0, dev.cols - 1}
     return False
 
 def gw5_logic_to_hclk_wires(device):
@@ -2284,6 +2289,14 @@ def fse_create_grid_plls_138(dev, device, dat):
     if device != 'GW5AST-138C':
         return
 
+    # Six of the twelve PLLA sites have direct inputs to the primary clock
+    # muxes.  The clock tables name those sources by quadrant/site rather than
+    # by the F0..F3 logic wires exposed at the PLL tile.
+    global_pll_sites = {
+        (27, 1): 'TLPLL0', (45, 0): 'TLPLL1', (63, 0): 'BLPLL0',
+        (27, 180): 'TRPLL0', (45, 181): 'TRPLL1', (63, 181): 'BRPLL0',
+    }
+
     for dat_row, row_desc in enumerate(dat.grid.rows):
         for dat_col, func in enumerate(row_desc):
             if func != 'P':
@@ -2294,6 +2307,13 @@ def fse_create_grid_plls_138(dev, device, dat):
                 row -= 1
             if col == dev.cols:
                 col -= 1
+
+            # The other six grid markers expose PLL configuration storage but
+            # have no named path into the primary clock mux tables.  Do not
+            # advertise them as routable PLLA BELs until those local-only
+            # paths are modeled.
+            if (row, col) not in global_pll_sites:
+                continue
 
             extra = dev.extra_func.setdefault((row, col), {})
             pll = extra.setdefault('pll', {})
@@ -2331,6 +2351,12 @@ def fse_create_grid_plls_138(dev, device, dat):
                              row, col, outputs[nam])
                     add_node(dev, f'X{col}Y{row}/PLLA{nam}{wire}', 'PLL_O',
                              row, col + off * offx, wire)
+
+                if (row, col) in global_pll_sites and nam.startswith('CLKOUT'):
+                    out_idx = int(nam[6:])
+                    if out_idx < 4:
+                        add_node(dev, f'{global_pll_sites[row, col]}CLK{out_idx}',
+                                 'PLL_O', row, col, outputs[nam])
 
             # CLKFBOUT is not present in the GW5AST grid-PLL port tables, but
             # it is still a real PLLA primitive port (and is used for internal
@@ -2536,6 +2562,11 @@ def fse_create_pll_clock_aliases(db, device):
                         if w_src.startswith('MPLL'):
                             db.nodes.setdefault(w_src, ("PLL_O", set()))[1].add((row, col, w_src))
                             db.nodes.setdefault(w_dst, ("PLL_O", set()))[1].add((row, col, w_dst))
+                    elif device == 'GW5AST-138C':
+                        if (w_src.startswith(('TLPLL', 'TRPLL', 'BLPLL', 'BRPLL'))
+                                and 'CLK' in w_src):
+                            db.nodes.setdefault(w_src, ("PLL_O", set()))[1].add(
+                                (row, col, w_src))
 
             # Himbaechel HCLK
             if (row, col) in db.hclk_pips:
@@ -4225,6 +4256,7 @@ def set_chip_flags(dev, device):
         dev.chip_flags.append("NEED_BSRAM_RESET_FIX")
         dev.chip_flags.append("NEED_CFGPINS_INVERSION")
         dev.chip_flags.append("HAS_5A_DSP")
+        dev.chip_flags.append("HAS_5A_HCLK")
 
     if device in {'GW5A-25A'}:
         dev.dcs_prefix = "CLKIN"
