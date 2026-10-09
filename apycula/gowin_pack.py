@@ -989,7 +989,10 @@ class BankDesc:
             io_type = default_io_type
         if self.bank_vccio:
             set_bel = self.set_attr_bels['BANK_VCCIO']
-            if self._vcc_ios[io_type] != self.bank_vccio:
+            # Family aliases such as SSTL no longer name a voltage. The
+            # constraint's BANK_VCCIO is the voltage for those standards.
+            expected_vccio = self._vcc_ios.get(io_type, self.bank_vccio)
+            if expected_vccio != self.bank_vccio:
                 if io_type_bel:
                     raise Exception(f"IO_TYPE and BANK_VCCIO conflict: X{io_type_bel.x}Y{io_type_bel.y}/IOB{io_type_bel.idx_str} ({io_type_bel.cell.name}) is trying to set {io_type} but X{set_bel.x}Y{set_bel.y}/IOB{set_bel.idx_str} ({set_bel.cell.name}) already set {self.bank_vccio}")
                 else:
@@ -6896,7 +6899,67 @@ class GW5AST_138C(GW5A):
                 and self.cli_args.args.done_as_gpio):
             tile[2][68] = 1
             tile[2][71] = 1
+        # The vendor console HDMI bank uses IO-type bits (1,123) and (9,122)
+        # that LVDS25 does not set, and it divides HCLK lane 0 by 5.
+        cells = self.pnr.in_file['modules'][self.pnr.top_module_name]['cells']
+        rows = set()
+        for cell in cells.values():
+            bel = str(cell.get('attributes', {}).get('NEXTPNR_BEL', ''))
+            if bel.startswith('X181Y') and cell.get('type') == 'OBUF':
+                rows.add(int(bel.split('Y', 1)[1].split('/')[0]))
+        if rows:
+            # HCLKDIV0_DIV=5 is bit (9,132). The open route arrives on HCLK
+            # lane 0, which is the serializer clock, so dividing it by 5
+            # would present 25 MHz where TMDS needs 125 MHz. The vendor image
+            # divides lane 0 because its serial clock is the other lane.
+            for row in rows:
+                iob = tilemap[row, 181]
+                iob[1][123] = 1
+                iob[9][122] = 1
+                # LVDS25 and LVDS_OUT are not set on the vendor clock pin.
+                iob[4][129] = 0
+                iob[9][127] = 0
+                # The vendor serializers leave GSR enabled. DISGSR is this bit.
+                iob[10][130] = 0
         return super().fuse_bitmap(tilemap)
+
+    def process_TLVDS_OBUF(self, bank_desc, bel):
+        self.check_tlvds_placement(bel)
+        av = self.set_io_attrvals(bel, self.default_tlvds_obuf_attrs, force_attrs = {'DRIVE': '0', 'BANK_VCCIO': self.get_lvds_bank_vccio()})
+        io_type = bel.cell.attrs.get('IO_TYPE')
+        if io_type:
+            self.chipdb.get_iob_attr_val(AttrVal("IO_TYPE", io_type), av)
+        else:
+            self.chipdb.get_iob_attr_val(AttrVal("IO_TYPE", self.get_default_tlvds_io_type()), av)
+        if bel.idx_str == 'A':
+            self.chipdb.get_iob_attr_val(AttrVal("LVDS_OUT", "ON"), av)
+        # The serializer drives the pad internally. A normal data net does not,
+        # so the pad mux has to select the fabric I pin.
+        if int(str(bel.cell.parms.get('IOLOGIC_IOB', '0')), 2) == 0:
+            self.chipdb.get_iob_attr_val(AttrVal("ODMUX_1", "1"), av)
+        return self.get_iob_fuses(bel.x, bel.y, bel.idx_str, av)
+
+    def get_out_iologic_attrs(self, bel: IologicBelDesc) -> list[AttrVal]:
+        """GW5AST-138C uses the same IOLOGIC FCLK select as GW5A-25A.
+
+        The HCLK route only reaches the serializer after FCLKSEL chooses
+        the lane. Routing fuses do not make that connection.
+        """
+        attr_vals = GW5A_25A.get_out_iologic_attrs(self, bel)
+        # The vendor console image on these tiles selects the serial lane as
+        # HCLK2 on FCLKSEL1/FCLKSEL2. FCLKSEL0 stays HCLK0. The 25A map writes
+        # HCLK0 into every select, which is a different encoding.
+        if bel.fclk not in (None, 'UNKNOWN'):
+            attr_vals = [av for av in attr_vals if not str(av.attr).startswith('FCLKSEL')]
+            # This route arrives on HCLK30, which is lane 0. Selecting the
+            # vendor image's HCLK2 lane leaves the serializer clock undriven.
+            attr_vals += [
+                AttrVal('FCLKSEL0', 'HCLK0'),
+                AttrVal('FCLKSEL1', 'HCLK0'),
+                AttrVal('FCLKSEL2', 'HCLK0_'),
+                AttrVal('FCLKSEL3', 'HCLK0'),
+            ]
+        return attr_vals
 
     #==============================
     #========== PLLs

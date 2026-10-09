@@ -64,11 +64,15 @@ def read_bitstream(fname):
                     if ba[0] == 0x10 and (int.from_bytes(ba, 'big') & (1 << 13)):
                         compressed = True
                     if ba[0] == 0x51:
-                        compress_keys[f'{ba[5]:08b}'] = 8
-                        if ba[6]:
+                        # 0xff is the empty default, not a compression token.
+                        if ba[5] not in (0, 0xff):
+                            compress_keys[f'{ba[5]:08b}'] = 8
+                        if ba[6] not in (0, 0xff):
                             compress_keys[f'{ba[6]:08b}'] = 4
-                            if ba[7]:
+                            if ba[7] not in (0, 0xff):
                                 compress_keys[f'{ba[7]:08b}'] = 2
+                        if not compress_keys:
+                            compressed = False
                 else:
                     #print("footer:", ba)
                     # Slots
@@ -93,11 +97,11 @@ def read_bitstream(fname):
                 if not preamble and ba[0] != 0xd2: # SPI address
                     #print("spi address", ba)
                     crcdat.extend(ba)
-                if not preamble and ba[0] == 0x3b: # frame count
+                if is_hdr and not preamble and ba[0] == 0x3b: # frame count
                     frames = int.from_bytes(ba[2:], 'big')
                     #print(f"frames:{frames}");
                     is_hdr = False
-                if not preamble and ba[0] == 0x06: # device ID
+                if is_hdr and not preamble and ba[0] == 0x06: # device ID
                     if ba == b'\x06\x00\x00\x00\x11\x00\x58\x1b':     # GW1N-9
                         padding = 4
                         compress_padding = 44 # <-- when using compression, the width of one row in bits must be a multiple of 64

@@ -495,6 +495,76 @@ def create_default_pips(tiles):
                         if src not in tile.pips[dest]:
                             tile.pips.setdefault(dest, {})[src] = set()
 
+def restrict_gw5ast_jtag_default_pips(dev, tiles):
+    """Drop zero-fuse pips that are not connected on GW5AST.
+
+    create_default_pips() advertises every alonenode member as a zero-fuse
+    pip. Two of those are real, and the router prefers the rest:
+
+    On the JTAG routing tile, vendor place-and-route leaves enable_er1 on
+    Q0→E800 and tdi on Q5→E830. Each is the sole empty source of that wire,
+    and a one-output vendor bitstream carries the signal with no fuse set on
+    this tile. Other empty Q0/Q5 pips, such as Q0→EW10 and Q5→E250, do not
+    connect.
+
+    On every tile, including the JTAG routing tile, Q1–Q7 have real 1-hop and
+    2-hop codes. The vendor counter and T-flip-flop set those codes, and the
+    vendor JTAG clock leaves on Q6→E830. create_default_pips also invents
+    empty longer wires (Q1→E210, Q6→E260) and empty Q→X hops (Q1→X02,
+    Q6→X07). nextpnr prefers them, so a flop output is emitted with no fuse.
+    Q0's only real pip anywhere is Q0→D0; the one empty exception is the
+    vendor-proven JTAG default Q0→E800, and likewise Q5→E830. Fused LUT-input
+    pips stay.
+    """
+    jtag_ttyp = dev.grid[108][165]
+    jtag_keep = {'Q0': {'E800'}, 'Q5': {'E830'}}
+    local = set()
+    local.update(f'D{i}' for i in range(8))
+    local.update(f'A{i}' for i in range(8))
+    local.update(f'B{i}' for i in range(8))
+    local.update(f'C{i}' for i in range(8))
+    q_srcs = {f'Q{i}' for i in range(8)}
+    for ttyp, tile in tiles.items():
+        for dest, srcs in tile.pips.items():
+            kept = set()
+            if ttyp == jtag_ttyp:
+                for src, allowed in jtag_keep.items():
+                    if dest in allowed:
+                        kept.add(src)
+            if dest in local:
+                continue
+            for src in q_srcs:
+                if src in kept:
+                    continue
+                bits = srcs.get(src)
+                if bits is not None and not bits:
+                    del srcs[src]
+
+def restrict_gw5ast_cross_half_bridge(tiles):
+    """Keep each clock half on its own bridge outputs.
+
+    A bottom-right PLL output can drive the top spines (SPINE8–13, which are
+    CBRIDGEOUT_TOP) and, at the neighbouring bridge column, the bottom spines
+    (SPINE16–21, which are CBRIDGEOUT_BOTTOM). The fuse tables also offer
+    CBRIDGEOUT_TOP as a source of the bottom spines. Routing that crossing
+    sets a real-looking fuse, but the bottom tiles do not clock: a color-bar
+    image whose counters landed in the bottom half stayed at zero while the
+    same PLL locked. The 50 MHz probe that does clock the bottom half enters
+    through CBRIDGEOUT_BOTTOM. Drop the cross-half sources so a net that
+    needs the bottom half takes the direct bottom spine.
+    """
+    for tile in tiles.values():
+        for dest, srcs in tile.clock_pips.items():
+            if not dest.startswith('SPINE'):
+                continue
+            bottom_spine = int(dest[5:]) >= 16
+            for src in list(srcs):
+                if not src.startswith('CBRIDGEOUT_'):
+                    continue
+                top_source = src.startswith('CBRIDGEOUT_TOP')
+                if top_source == bottom_spine:
+                    del srcs[src]
+
 # The new IDE introduces Q6 and Q7 as sources, and their connection fuses look suspiciously
 # similar to VCC connection fuses, so we rename Q6 and Q7 to VCC.
 def create_vcc_pips(dev, tiles):
@@ -4340,6 +4410,9 @@ def from_fse(device, fse, dat: Datfile):
     if device not in {'GW5A-25A', 'GW5AST-138C'}:
         create_vcc_pips(dev, tiles)
     create_default_pips(tiles)
+    if device == 'GW5AST-138C':
+        restrict_gw5ast_jtag_default_pips(dev, tiles)
+        restrict_gw5ast_cross_half_bridge(tiles)
 
     fse_create_diff_types(dev, device)
     fse_create_hclk_nodes(dev, device, fse, dat)
