@@ -1168,6 +1168,11 @@ def gw5_get_num_of_hclks(device):
         return 4;
     return 6
 
+def gw5_is_hclk_to_clk_gate(device, srcid, destid):
+    return (device == 'GW5AST-138C'
+            and srcid in {25, 27, 28, 29}
+            and destid in range(169, 185))
+
 # These cells do contain IOLOGIC
 def gw5_create_hclk_iol_pip(dev, device, row, col):
     if device == 'GW5A-25A':
@@ -1231,6 +1236,21 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
                                 dev.hclk_pips.setdefault((row, col), {}).setdefault(dest, {}).update({src: fuses})
                                 add_node(dev, f"HCLK{hclk_idx}_{src}", "HCLK", row, col, src)
                                 add_node(dev, dest, "GLOBAL_CLK", row, col, dest)
+                            elif gw5_is_hclk_to_clk_gate(
+                                    device, srcid, destid):
+                                # HCLK-to-global-clock gates cross namespaces:
+                                # the source repeats per HCLK bank, but the
+                                # destination is a die-wide BDHCLK wire.
+                                src = wnames.hclknames[
+                                    srcid + hclk_idx * hclk_off]
+                                dest = wnames.clknames[destid]
+                                dev.hclk_pips.setdefault(
+                                    (row, col), {}).setdefault(
+                                        dest, {}).update({src: fuses})
+                                add_node(dev, f"HCLK{hclk_idx}_{src}",
+                                         "GLOBAL_CLK", row, col, src)
+                                add_node(dev, dest, "GLOBAL_CLK",
+                                         row, col, dest)
                             elif srcid in {84, 85}:
                                 # XXX unknown CLKDIV2 inputs, skip for now
                                 continue

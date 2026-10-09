@@ -43,6 +43,18 @@ class GW5ASTHclkTests(unittest.TestCase):
         self.assertFalse(chipdb.gw5_create_hclk_iol_pip(
             dev, 'GW5AST-138C', 40, 40))
 
+    def test_hclk_to_global_clock_gate_ids(self):
+        for src in (25, 27, 28, 29):
+            for dst in (169, 176, 184):
+                self.assertTrue(chipdb.gw5_is_hclk_to_clk_gate(
+                    'GW5AST-138C', src, dst))
+        self.assertFalse(chipdb.gw5_is_hclk_to_clk_gate(
+            'GW5A-25A', 25, 169))
+        self.assertFalse(chipdb.gw5_is_hclk_to_clk_gate(
+            'GW5AST-138C', 26, 169))
+        self.assertFalse(chipdb.gw5_is_hclk_to_clk_gate(
+            'GW5AST-138C', 25, 168))
+
     def test_device_enables_gw5_hclk_architecture(self):
         dev = SimpleNamespace(chip_flags=[], dcs_prefix=None)
         chipdb.set_chip_flags(dev, 'GW5AST-138C')

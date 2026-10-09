@@ -1982,7 +1982,14 @@ class Device:
         io_diff_cfg = self.chipdb.get_io_diff_cfg(bel.x, bel.y, bel.idx_str)
         if not io_diff_cfg:
             raise Exception(f"X{bel.x}Y{bel.y}/IOB{bel.idx_str} ({bel.cell.name}) cannot be placed - location is not a LVDS pin")
-        if io_diff_cfg.true_lvds:
+        # GW5AST true-LVDS-capable pairs can also operate as 3.3 V emulated
+        # differential outputs.  Gowin PnR uses this combination for HDMI
+        # (ELVDS_OBUF + LVCMOS33D) on the device's right-edge true-LVDS pins.
+        gw5ast_emulated_output = (
+            self.device_name == 'GW5AST-138C'
+            and bel.cell.typ in {'ELVDS_OBUF', 'ELVDS_TBUF'}
+        )
+        if io_diff_cfg.true_lvds and not gw5ast_emulated_output:
             raise Exception(f"X{bel.x}Y{bel.y}/IOB{bel.idx_str} ({bel.cell.name}) cannot be placed - location is a True LVDS pin")
         if io_diff_cfg.positive != (bel.cell.parms.get('DIFF') == 'P'):
             raise Exception(f"X{bel.x}Y{bel.y}/IOB{bel.idx_str} ({bel.cell.name}) cannot be placed - pin P must be IOBA, pin N must be IOBB")
