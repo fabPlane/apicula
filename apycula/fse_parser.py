@@ -123,7 +123,7 @@ def read_one_file(f, tile_type, device):
         elif typ == 0x9a: # 60K
             typn = "logicinfo"
             t = read_table(f, size, 3, 2)
-        elif typ == -1 and size == -1 and device == 'GW5AST-138C':
+        elif typ == -1 and size == -1:
             # Some 138C tile records contain an empty table descriptor.
             continue
         else:

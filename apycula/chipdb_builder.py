@@ -11,7 +11,6 @@ from apycula import wirenames as wnames
 from apycula import dat_parser
 from apycula import tm_parser
 from apycula import chipdb
-from apycula import bslib
 from apycula.chipdb import save_chipdb
 from apycula import tracing
 from apycula import gowin_unpack
@@ -254,26 +253,19 @@ _chip_id = {
 # generate bitsream header
 def gen_hdr(device, params):
     hdr = [bytearray(b'\xff'*20)]
-    if device == 'GW5AST-138C':
-        # GW5AST-138C requires the additional sync marker emitted by Gowin
-        # EDA before the normal 0xffff/A5C3 command stream.
-        hdr.append(bytearray(b'\xff\xff\xff\xff\xde\xde\xde\xde\xff\xff\xff\xff'))
     hdr.append(bytearray(b'\xff'*2))
     # magic
     hdr.append(bytearray(b'\xa5\xc3'))
     # chip id
     hdr.append(bytearray(_chip_id[device]))
     # flags?
-    flags = b'\x10\x00\x00\x00\x00\xac\x00\x00' if device == 'GW5AST-138C' \
-        else b'\x10\x00\x00\x00\x00\xae\x00\x00'
-    hdr.append(bytearray(flags))
-    if device in {'GW5A-25A', 'GW5AST-138C'}:
+    hdr.append(bytearray(b'\x10\x00\x00\x00\x00\xae\x00\x00'))
+    if params['device'] in {'GW5A-25A'}:
         hdr.append(bytearray(b'\x62\x00\x00\x00\x00\x00\x00\x40'))
     # compression keys
     hdr.append(bytearray(b'\x51\x00\xff\xff\xff\xff\xff\xff'))
     # something about the Security Bit
-    if device != 'GW5AST-138C':
-        hdr.append(bytearray(b'\x0b\x00\x00\x00'))
+    hdr.append(bytearray(b'\x0b\x00\x00\x00'))
     # SPI address = 0
     hdr.append(bytearray(b'\xd2\x00\xff\xff\x00\x00\x00\x00'))
     # unknown
@@ -385,8 +377,6 @@ def main():
                         help='Skip SDRAM pin discovery')
     parser.add_argument('-o', '--output',
                         help='Output path (default: apycula/{device}.msgpack.xz)')
-    parser.add_argument('--template-bitstream',
-                        help='Empty vendor .fs used as the base configuration bitmap')
     args = parser.parse_args()
 
     device = args.device
@@ -476,19 +466,6 @@ def main():
 
     # the reverse logicinfo does not make sense to store in the database
     db.rev_li = {}
-
-    if args.template_bitstream:
-        template, _, _, _ = bslib.read_bitstream(args.template_bitstream)
-        if len(template) < db.height or len(template[0]) < db.width:
-            raise ValueError(
-                f"Template bitmap is {len(template)}x{len(template[0])}, "
-                f"but the device requires at least {db.height}x{db.width}")
-        if hasattr(template, 'tolist'):
-            template = template[:, :db.width].tolist()
-        else:
-            template = [row[:db.width] for row in template]
-        db.template = template[:db.height]
-        db.template_extra = template[db.height:]
 
     # Save output
     output = args.output or f"apycula/{device}.msgpack.xz"

@@ -110,9 +110,6 @@ class Device:
     cmd_hdr: List[bytearray] = field(default_factory=list)
     cmd_ftr: List[bytearray] = field(default_factory=list)
     template: Optional[List[List[int]]] = None
-    # Configuration rows present in the bitstream but outside the tile grid.
-    # These must be preserved when a template bitstream is used.
-    template_extra: Optional[List[List[int]]] = None
     # allowable values of bel attributes
     # {table_name: {(attr_id, attr_value): code}}
     logicinfo: Dict[str, Dict[Tuple[int, int], int]] = field(default_factory=dict)
@@ -1137,19 +1134,6 @@ def gw5_hclk_idx(dev, device, row, col):
         if col == 0:
             return 2
         return 3
-    if device == 'GW5AST-138C':
-        # Two HCLK banks serve each vertical edge, while the two additional
-        # banks live along the bottom edge.  Table-48 also occurs in small
-        # bridge fragments; assigning by edge/half associates those fragments
-        # with the same control block as the full switch-matrix tile.
-        if col == 0:
-            return 0 if row < dev.rows // 2 else 2
-        if col == dev.cols - 1:
-            return 1 if row < dev.rows // 2 else 3
-        if row == dev.rows - 1:
-            return 4 if col < dev.cols // 2 else 5
-        if row == 0:
-            return 0 if col < dev.cols // 2 else 1
     return -1
 
 # Table 48 describes the HCLK wire connections, but the problem is that it also
@@ -1161,7 +1145,7 @@ def gw5_hclk_wire_offset(device):
     return {'GW5A-25A': 187, 'GW5AST-138C': 187}[device]
 
 def gw5_ihclk_wire_num(device):
-    return {'GW5A-25A': 65, 'GW5AST-138C': 65}[device]
+    return {'GW5A-25A': 65}[device]
 
 def gw5_get_num_of_hclks(device):
     if device == 'GW5A-25A':
@@ -1179,18 +1163,11 @@ def gw5_create_hclk_iol_pip(dev, device, row, col):
             return row not in {10, 18}
         if col == dev.cols - 1:
             return row not in {2, 10, 27}
-    if device == 'GW5AST-138C':
-        # The IOLOGIC sites are distributed along all four edges.  Individual
-        # tiles without an IOLOGIC simply leave these virtual FCLK endpoints
-        # unused in nextpnr.
-        return row in {0, dev.rows - 1} or col in {0, dev.cols - 1}
     return False
 
 def gw5_logic_to_hclk_wires(device):
     if device == 'GW5A-25A':
         return {0: (0, 64), 1: (36, 27), 2: (1, 0), 3: (34, 91)}
-    if device == 'GW5AST-138C':
-        return _gw5a_hclk_locs[device]
     return {}
 
 def make_hclk_pip(dev, hclk_idx, row, col, src, dest, fuses = set()):
@@ -1224,8 +1201,7 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
                         fuses = {fuse.fuse_lookup(fse, ttyp, f, device) for f in unpad(fuses)}
                         # HCLK wires
                         if srcid < hclk_off:
-                            if (device == 'GW5A-25A'
-                                    and srcid in range(104, 108)): # CLKDIV outputs
+                            if srcid in range(104, 108): # CLKDIV outputs
                                 src = wnames.hclknames[srcid + hclk_idx * hclk_off]
                                 dest = wnames.clknames[destid]
                                 dev.hclk_pips.setdefault((row, col), {}).setdefault(dest, {}).update({src: fuses})
@@ -1241,9 +1217,7 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
                                 src = wnames.hclknames[srcid + hclk_idx * hclk_off]
                                 dest = wnames.hclknames[destid + hclk_idx * hclk_off]
                                 mk_hclk_pip(hclk_idx, row, col, src, dest, fuses)
-                            elif (device == 'GW5A-25A'
-                                  and srcid in range(hclk_off, hclk_off + 4 * ihclk_wire_num)
-                                  and destid in range(hclk_off, hclk_off + 4 * ihclk_wire_num)):
+                            elif srcid in range(hclk_off, hclk_off + 4 * ihclk_wire_num) and destid in range(hclk_off, hclk_off + 4 * ihclk_wire_num):
                                 src = wnames.hclknames[srcid + 5 * hclk_off]
                                 dest = wnames.hclknames[destid + 5 * hclk_off]
                                 mk_hclk_pip('_IHCLK', row, col, src, dest, fuses)
@@ -1270,9 +1244,10 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
     # default PIPs - The tables for the GW5A series do not include
     # descriptions of the default PIPs. So we add them manually by placing
     # them in cell (0, 0) — this works because the default PIP has no fuse.
+    # XXX This section will need to be modified for the 138C—it has more HCLKs
     row = 0
     col = 0
-    for hclk_idx in range(gw5_get_num_of_hclks(device)):
+    for hclk_idx in range(4):
         for j in range(4):
             # make pip HCLKxy <- HCLK_MUX_ALPHAxy
             src = f'HCLK_MUX_ALPHA{hclk_idx}{j}'
@@ -1312,7 +1287,7 @@ def gw5_make_hclk_pips(dev, device, fse, dat: Datfile):
 
 
     # Epsilon defaults
-    for i in range(gw5_get_num_of_hclks(device)):
+    for i in range(4):
         mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}0', f'HCLK_BUF_AI{i}0')
         mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}2', f'HCLK_BUF_AI{i}1')
         mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}4', f'HCLK_BUF_AI{i}2')
@@ -1484,20 +1459,7 @@ def gw5_make_hclk_to_clk_gates(dev, device, fse, dat: Datfile):
 # The GW5A series has a different CLKDIV/CLKDIV2 configuration—each of the four
 # wires in a single HCLK block has its own dedicated CLKDIV/CLKDIV2. The inputs
 # for CLKDIV2 are HCLK_BUF_BO.
-_gw5a_hclk_locs = {
-    'GW5A-25A': {
-        0: (0, 64), 1: (36, 27), 2: (1, 0), 3: (34, 91),
-    },
-    # GW5AST-138C has six HCLK control blocks.  These are the six tiles with
-    # full table-48 HCLK switch matrices (the other table-48 tiles are only
-    # edge/bridge fragments).  Four CLKDIVs per block matches the 24 CLKDIVs
-    # reported by the vendor tools.
-    'GW5AST-138C': {
-        0: (27, 0), 1: (27, 181),
-        2: (81, 0), 3: (81, 181),
-        4: (108, 64), 5: (108, 117),
-    },
-}
+_gw5a_hclk_locs = { 'GW5A-25A': { 0: (0, 64), 1: (36, 27), 2: (1, 0), 3: (34, 91)} }
 def gw5_add_hclk_bels(dat, dev, device):
     for hclk_idx, hclk_loc in _gw5a_hclk_locs[device].items():
         row, col = hclk_loc
@@ -1926,7 +1888,7 @@ def _iter_edge_coords(dev):
 
 def add_hclk_bels(dat, dev, device):
     #Stub for parts that don't have HCLK bel support yet
-    if device in {'GW5A-25A', 'GW5AST-138C'}:
+    if device in {'GW5A-25A'}:
         gw5_add_hclk_bels(dat, dev, device)
         return
     if device not in ("GW2A-18", "GW2A-18C", "GW1N-9", "GW1N-9C", "GW1N-1", "GW1NZ-1", "GW1NS-4", "GW1N-4"):
@@ -2040,9 +2002,6 @@ def fse_create_hclk_nodes(dev, device, fse, dat: Datfile):
     if device in {'GW5A-25A'}:
         gw5_make_pin_to_hclk(dev)
         gw5_make_hclk_to_clk_gates(dev, device, fse, dat)
-        gw5_make_hclk_pips(dev, device, fse, dat)
-        return
-    if device == 'GW5AST-138C':
         gw5_make_hclk_pips(dev, device, fse, dat)
         return
 
@@ -2289,14 +2248,6 @@ def fse_create_grid_plls_138(dev, device, dat):
     if device != 'GW5AST-138C':
         return
 
-    # Six of the twelve PLLA sites have direct inputs to the primary clock
-    # muxes.  The clock tables name those sources by quadrant/site rather than
-    # by the F0..F3 logic wires exposed at the PLL tile.
-    global_pll_sites = {
-        (27, 1): 'TLPLL0', (45, 0): 'TLPLL1', (63, 0): 'BLPLL0',
-        (27, 180): 'TRPLL0', (45, 181): 'TRPLL1', (63, 181): 'BRPLL0',
-    }
-
     for dat_row, row_desc in enumerate(dat.grid.rows):
         for dat_col, func in enumerate(row_desc):
             if func != 'P':
@@ -2307,13 +2258,6 @@ def fse_create_grid_plls_138(dev, device, dat):
                 row -= 1
             if col == dev.cols:
                 col -= 1
-
-            # The other six grid markers expose PLL configuration storage but
-            # have no named path into the primary clock mux tables.  Do not
-            # advertise them as routable PLLA BELs until those local-only
-            # paths are modeled.
-            if (row, col) not in global_pll_sites:
-                continue
 
             extra = dev.extra_func.setdefault((row, col), {})
             pll = extra.setdefault('pll', {})
@@ -2351,20 +2295,6 @@ def fse_create_grid_plls_138(dev, device, dat):
                              row, col, outputs[nam])
                     add_node(dev, f'X{col}Y{row}/PLLA{nam}{wire}', 'PLL_O',
                              row, col + off * offx, wire)
-
-                if (row, col) in global_pll_sites and nam.startswith('CLKOUT'):
-                    out_idx = int(nam[6:])
-                    if out_idx < 4:
-                        add_node(dev, f'{global_pll_sites[row, col]}CLK{out_idx}',
-                                 'PLL_O', row, col, outputs[nam])
-
-            # CLKFBOUT is not present in the GW5AST grid-PLL port tables, but
-            # it is still a real PLLA primitive port (and is used for internal
-            # feedback mode).  Give it a private wire just as the GW5A slot
-            # PLL path does; external routing is neither required nor implied.
-            outputs['CLKFBOUT'] = 'PLLACLKFBOUT'
-            add_node(dev, f'X{col}Y{row}/PLLACLKFBOUT', 'PLL_O',
-                     row, col, outputs['CLKFBOUT'])
 
 # DHCEN (as I imagine) is an additional control input of the HCLK input
 # multiplexer. We have four input multiplexers - HCLK_IN0, HCLK_IN1, HCLK_IN2,
@@ -2562,11 +2492,6 @@ def fse_create_pll_clock_aliases(db, device):
                         if w_src.startswith('MPLL'):
                             db.nodes.setdefault(w_src, ("PLL_O", set()))[1].add((row, col, w_src))
                             db.nodes.setdefault(w_dst, ("PLL_O", set()))[1].add((row, col, w_dst))
-                    elif device == 'GW5AST-138C':
-                        if (w_src.startswith(('TLPLL', 'TRPLL', 'BLPLL', 'BRPLL'))
-                                and 'CLK' in w_src):
-                            db.nodes.setdefault(w_src, ("PLL_O", set()))[1].add(
-                                (row, col, w_src))
 
             # Himbaechel HCLK
             if (row, col) in db.hclk_pips:
@@ -3738,50 +3663,32 @@ def fse_create_gsr(dev, device):
         {'gsr': {'wire': wire}})
 
 def fse_create_jtag(dev, device, dat):
-    # The DAT JtagIns/JtagOuts tables contain fabric wire indices in their
-    # vendor-defined table order.  Use those instead of copying the mapping
-    # from another family: for example, GW2A uses C1/C2 for the ER return data
-    # while GW5AST uses B2/B3.
-    if device == 'GW2A-18C':
-        row, col = 27, 50
-    elif device == 'GW5AST-138C':
-        row, col = 108, 166
-    else:
+    # XXX
+    if device not in {'GW2A-18C'}:
         return
-
-    input_ports = [
-        'tck_pad_i', 'tms_pad_i', 'tdi_pad_i', 'tdo_er1_i', 'tdo_er2_i'
-    ]
-    output_ports = [
-        'tdo_pad_o', 'tck_o', 'tdi_o', 'test_logic_reset_o',
-        'run_test_idle_er1_o', 'run_test_idle_er2_o',
-        'shift_dr_capture_dr_o', 'pause_dr_o', 'update_dr_o', 'enable_er1_o',
-        'enable_er2_o'
-    ]
-
-    def jtag_ports(names, indices):
-        return {
-            name: (wnames.wirenames[index] if index >= 0
-                   else f'DUMMY_JTAG_{name.upper()}')
-            for name, index in zip(names, indices)
-        }
-
-    inputs = jtag_ports(input_ports, dat.compat_dict['JtagIns'])
-    outputs = jtag_ports(output_ports, dat.compat_dict['JtagOuts'])
-
-    # On GW5AST the hard block is located in X166Y108, but getCruNodeByIndex()
-    # resolves its fabric outputs to the adjacent X165Y108 routing tile.  Model
-    # that as explicit cross-tile nodes; treating Q6/F6/etc. as local wires on
-    # the hard-block tile produces a valid-looking route that is not connected
-    # to the silicon JTAG block.
-    if device == 'GW5AST-138C':
-        for port, index in zip(output_ports, dat.compat_dict['JtagOuts']):
-            if index >= 0:
-                make_port(dev, row, col, row + 1, col, index, 'GW_JTAG', port,
-                          'JTAG_OUT', outputs)
-
+    row, col = 27, 50
     dev.extra_func.setdefault((row, col), {}).update(
-        {'jtag': {'inputs': inputs, 'outputs': outputs}})
+        {'jtag': {
+            'inputs': {
+                'tck_pad_i': 'DUMMY_JTAG_TCK_PAD',
+                'tms_pad_i': 'DUMMY_JTAG_TMS_PAD',
+                'tdi_pad_i': 'DUMMY_JTAG_TDI_PAD',
+                'tdo_er1_i': 'C1',
+                'tdo_er2_i': 'C2',
+                },
+            'outputs': {
+                'tdo_pad_o': 'DUMMY_JTAG_TDO_PAD',
+                'pause_dr_o': 'DUMMY_JTAG_PAUSE',
+                'tck_o': 'Q6',
+                'tdi_o': 'Q5',
+                'test_logic_reset_o': 'Q3',
+                'run_test_idle_er1_o': 'Q4',
+                'run_test_idle_er2_o': 'F7',
+                'shift_dr_capture_dr_o': 'F6',
+                'update_dr_o': 'Q2',
+                'enable_er1_o': 'Q0',
+                'enable_er2_o': 'Q1',
+                }}})
 
 def fse_create_bandgap(dev, device):
     # The cell and wire are found by a test compilation where the BGEN input is
@@ -3944,21 +3851,6 @@ def fse_create_pincfg(dev, device, dat):
         r, c, wire = dat.gw5aStuff['CibFabricNode'][idx]
         if r != 65535:
             make_port(dev, row, col, r, c, wire, 'PINCFG', port, 'PINCFG_IN', ins)
-
-    # The GW5AST-LV138PG484AC1/I0 DAT distributed with current Gowin releases
-    # marks these CibFabricNode entries as invalid.  Preserve the mappings from
-    # the vendor-generated database so regenerated chipdbs remain routable.
-    if device == 'GW5AST-138C' and not ins:
-        ins.update({
-            'SSPI': 'D7',
-            'UNK0_VCC': 'B5',
-            'UNK1_VCC': 'D5',
-            # GW5AST's packer connects this inverted configuration input to
-            # ground.  Model the hard-wired value directly so nextpnr does
-            # not try to route the vendor-only PINCFGUNK2_VCCC0 pseudo-wire.
-            'UNK2_VCC': 'VSS',
-            'UNK3_VCC': 'D6',
-        })
 
     if device in {'GW5A-25A'}:
         # special input (not in the DAT file)
@@ -4256,7 +4148,6 @@ def set_chip_flags(dev, device):
         dev.chip_flags.append("NEED_BSRAM_RESET_FIX")
         dev.chip_flags.append("NEED_CFGPINS_INVERSION")
         dev.chip_flags.append("HAS_5A_DSP")
-        dev.chip_flags.append("HAS_5A_HCLK")
 
     if device in {'GW5A-25A'}:
         dev.dcs_prefix = "CLKIN"
